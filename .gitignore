@@ -1,0 +1,9 @@
+# .gitignore
+data/raw/*
+data/processed/*
+outputs/logs/*
+outputs/plots/*
+*.pyc
+__pycache__/
+.venv/
+*.ipynb_checkpoints/
