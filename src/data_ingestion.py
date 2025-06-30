@@ -44,9 +44,9 @@ def load_all_synpuf_files(data_dir: str = "data/raw") -> Dict[str, pd.DataFrame]
     }
     required_columns = {
         "beneficiary": ["DESYNPUF_ID", "BENE_BIRTH_DT", "BENE_SEX_IDENT_CD"],
-        "inpatient": ["DESYNPUF_ID", "CLM_ID", "CLM_FROM_DT", "CLM_PMT_AMT", "ICD9_DGNS_CD_1"],
-        "outpatient": ["DESYNPUF_ID", "CLM_ID", "CLM_FROM_DT", "CLM_PMT_AMT", "HCPCS_CD"],
-        "carrier": ["DESYNPUF_ID", "CLM_ID", "CLM_FROM_DT", "CLM_PMT_AMT", "HCPCS_CD"]
+        "inpatient": ["DESYNPUF_ID", "CLM_ID", "CLM_FROM_DT", "CLM_PMT_AMT", "CLM_DRG_CD", "ICD9_DGNS_CD_1"],
+        "outpatient": ["DESYNPUF_ID", "CLM_ID", "CLM_FROM_DT", "CLM_PMT_AMT", "HCPCS_CD_1", "ICD9_DGNS_CD_1"],
+        "carrier": ["DESYNPUF_ID", "CLM_ID", "CLM_FROM_DT", "LINE_NCH_PMT_AMT_1", "HCPCS_CD_1", "ICD9_DGNS_CD_1"]
     }
     csv_files = [f for f in os.listdir(data_dir) if f.endswith(".csv")]
     if not csv_files:
