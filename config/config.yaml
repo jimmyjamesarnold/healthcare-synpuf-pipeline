@@ -1,0 +1,14 @@
+# config.yaml
+paths:
+  raw_data: "data/raw"
+  processed_data: "data/processed"
+  output_plots: "outputs/plots"
+  logs: "outputs/logs/pipeline_logs.json"
+preprocessing:
+  year: 2009
+  top_n: 100
+  impute_value: "Unknown"
+analysis:
+  top_n: 10
+visualization:
+  plot_style: "seaborn"
