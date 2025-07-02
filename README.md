@@ -19,9 +19,9 @@ A Python pipeline to process CMS SynPUF (2008–2010) healthcare data, summarize
 ```bash
    python src/main.py
    ```
-## Dashboard (in progress)
+## Dashboard 
 - **Summary Table**: Total 2009 payments for top 100 beneficiaries.
-- **Claims Table**: Claim-level details (source, date, amount, diagnosis, procedure/DRG).
+- **Diagnosis Table**: Total 2009 payments for selected members by ICD9 Code (default total top 100).
 - **Stacked Bar Chart**: Total payments by date, colored by source (inpatient, outpatient, carrier).
 
 ## Features
@@ -45,3 +45,7 @@ Unit tests are provided in `tests/`. Run with:
 - Fixed test failures in `test_preprocessing.py` by applying `convert_types` to fixtures, ensuring `CLM_FROM_DT` is datetime.
 - All 8 tests in `test_preprocessing.py` now pass, validating the pipeline.
 - Confirmed pipeline processes SynPUF data for 2009, producing `claims_2009.csv` with 5,271 claims.
+- Added `src/dashboard.py` with a Dash dashboard featuring:
+  - Paginated, sortable beneficiary table with highlighted selections (top-left quadrant).
+  - Top 10 diagnosis table, filterable by beneficiary, with highlighted selections (top-right quadrant).
+  - Stacked bar chart of payments by week/month, filterable by beneficiary or diagnosis, showing all 52 weeks numerically sorted with zero imputation (bottom half).
