@@ -11,6 +11,14 @@ df["CLM_FROM_DT"] = pd.to_datetime(df["CLM_FROM_DT"])
 # Add week and month columns
 df["Week"] = df["CLM_FROM_DT"].dt.isocalendar().week
 df["Month"] = df["CLM_FROM_DT"].dt.to_period("M").astype(str)
+# Clean primary_dx: convert to string, strip whitespace, remove leading zeros
+df["primary_dx"] = df["primary_dx"].astype(str).str.strip().str.lstrip("0")
+
+# Load ICD-9 mapping file
+icd9_map = pd.read_csv("data/raw/CMS32_DESC_LONG_DX.csv", sep="\t")
+icd9_map = icd9_map.rename(columns={"ICD9_CD": "primary_dx", "ICD9_DESC_LONG": "description"})  # Adjust column names if needed
+# Clean ICD-9 codes: convert to string, strip whitespace, remove leading zeros
+icd9_map["primary_dx"] = icd9_map["primary_dx"].astype(str).str.strip().str.lstrip("0")
 
 # Create fixed week and month DataFrames for imputation
 weeks = pd.DataFrame(
@@ -36,6 +44,8 @@ dx_df = df.groupby("primary_dx").agg({
     "claim_amt": "sum",
     "CLM_ID": "count"
 }).reset_index().rename(columns={"claim_amt": "Total Payment", "CLM_ID": "Claim Count"})
+dx_df = dx_df.merge(icd9_map[["primary_dx", "description"]], on="primary_dx", how="left")
+dx_df["description"] = dx_df["description"].fillna(dx_df["primary_dx"])  # Fallback to code if description missing
 dx_df = dx_df.sort_values("Total Payment", ascending=False).head(10)
 
 # Layout
@@ -75,7 +85,7 @@ app.layout = html.Div([
             dash_table.DataTable(
                 id="dx-table",
                 columns=[
-                    {"name": "Primary Diagnosis", "id": "primary_dx"},
+                    {"name": "Diagnosis Description", "id": "description"},
                     {"name": "Total Payment", "id": "Total Payment"},
                     {"name": "Claim Count", "id": "Claim Count"}
                 ],
@@ -85,13 +95,40 @@ app.layout = html.Div([
                 style_table={"overflowX": "auto", "maxHeight": "40vh", "overflowY": "auto"},
                 style_cell={"textAlign": "left", "padding": "5px", "fontSize": "12px"},
                 style_header={"fontWeight": "bold", "fontSize": "12px"},
+                style_cell_conditional=[
+                    {
+                        "if": {"column_id": "description"},
+                        "width": "300px",
+                        "maxWidth": "300px",
+                        "whiteSpace": "nowrap",
+                        "overflow": "hidden",
+                        "textOverflow": "ellipsis"
+                    },
+                    {
+                        "if": {"column_id": "Total Payment"},
+                        "width": "100px",
+                        "textAlign": "right"
+                    },
+                    {
+                        "if": {"column_id": "Claim Count"},
+                        "width": "100px",
+                        "textAlign": "right"
+                    }
+                ],
                 style_data_conditional=[
                     {
                         "if": {"state": "selected"},
                         "backgroundColor": "#e6f3ff",
                         "fontWeight": "bold"
                     }
-                ]
+                ],
+                tooltip_data=[
+                    {
+                        "description": {"value": row["description"], "type": "text"}
+                    } for row in dx_df.to_dict("records")
+                ],
+                tooltip_delay=0,
+                tooltip_duration=None
             )
         ], style={"width": "50%", "display": "inline-block", "verticalAlign": "top", "padding": "10px"})
     ], style={"display": "flex", "height": "50vh"}),
@@ -151,6 +188,8 @@ def update_dashboard(selected_ben_row, selected_dx_row, time_agg, reset_clicks):
         "claim_amt": "sum",
         "CLM_ID": "count"
     }).reset_index().rename(columns={"claim_amt": "Total Payment", "CLM_ID": "Claim Count"})
+    dx_data = dx_data.merge(icd9_map[["primary_dx", "description"]], on="primary_dx", how="left")
+    dx_data["description"] = dx_data["description"].fillna(dx_data["primary_dx"])  # Fallback to code if description missing
     dx_data = dx_data.sort_values("Total Payment", ascending=False).head(10)
     
     # Update payment chart
