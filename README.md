@@ -14,6 +14,8 @@ A Python pipeline to process CMS SynPUF (2008–2010) healthcare data, summarize
 ## Data
 1. Download CMS SynPUF files from: https://www.cms.gov/Research-Statistics-Data-and-Systems/Downloadable-Public-Use-Files/SynPUFs
 2. Place files in data/raw/
+3. Download CMS ICD-9-CM description V32 from: https://www.cms.gov/medicare/coding-billing/icd-10-codes/icd-9-cm-diagnosis-procedure-codes-abbreviated-and-full-code-titles
+4. Extract CMS32_DESC_LONG_DX.txt, convert to table using fixed-length and save as tab-limited CMS32_DESC_LONG_DX.csv to data/raw/
 
 ## Usage (in progress)
 ```bash
@@ -21,7 +23,7 @@ A Python pipeline to process CMS SynPUF (2008–2010) healthcare data, summarize
    ```
 ## Dashboard 
 - **Summary Table**: Total 2009 payments for top 100 beneficiaries.
-- **Diagnosis Table**: Total 2009 payments for selected members by ICD9 Code (default total top 100).
+- **Diagnosis Table**: Total 2009 payments for selected members by ICD9 description (default total top 100).
 - **Stacked Bar Chart**: Total payments by date, colored by source (inpatient, outpatient, carrier).
 
 ## Features
@@ -49,3 +51,4 @@ Unit tests are provided in `tests/`. Run with:
   - Paginated, sortable beneficiary table with highlighted selections (top-left quadrant).
   - Top 10 diagnosis table, filterable by beneficiary, with highlighted selections (top-right quadrant).
   - Stacked bar chart of payments by week/month, filterable by beneficiary or diagnosis, showing all 52 weeks numerically sorted with zero imputation (bottom half).
+  - Added `data/raw/CMS32_DESC_LONG_DX.csv` for ICD-9 code descriptions.
