@@ -15,15 +15,15 @@ if project_root not in sys.path:
 
 from src.utils import setup_logger
 
-# Initialize logger from src/utils.py
+# Initialize logger
 logger = setup_logger(log_dir=os.path.join(project_root, "outputs/logs"), log_file="pipeline.log")
 
 # Define dtypes for all relevant fields
 BENEFICIARY_DTYPES = {
-    'DESYNPUF_ID': str,
-    'BENE_BIRTH_DT': str,
-    'BENE_SEX_IDENT_CD': str,
-    'SP_STATE_CODE': str,
+    'DESYNPUF_ID': 'string',
+    'BENE_BIRTH_DT': 'string',
+    'BENE_SEX_IDENT_CD': 'string',
+    'SP_STATE_CODE': 'string',
     'BENE_HI_CVRAGE_TOT_MONS': 'int32',
     'SP_ALZHDMTA': 'int8',
     'SP_CHF': 'int8',
@@ -40,14 +40,14 @@ BENEFICIARY_DTYPES = {
 BENEFICIARY_COLUMNS = list(BENEFICIARY_DTYPES.keys())
 
 CLAIMS_DTYPES = {
-    'DESYNPUF_ID': str,
-    'CLM_ID': str,
-    'CLM_FROM_DT': str,
+    'DESYNPUF_ID': 'string',
+    'CLM_ID': 'string',
+    'CLM_FROM_DT': 'string',
     'CLM_PMT_AMT': 'float64',
-    'ADMTNG_ICD9_DGNS_CD': str,
-    **{f'ICD9_DGNS_CD_{i}': str for i in range(1, 11)},
-    **{f'HCPCS_CD_{i}': str for i in range(1, 46)},
-    **{f'LINE_ICD9_DGNS_CD_{i}': str for i in range(1, 14)},
+    'ADMTNG_ICD9_DGNS_CD': 'string',
+    **{f'ICD9_DGNS_CD_{i}': 'string' for i in range(1, 11)},
+    **{f'HCPCS_CD_{i}': 'string' for i in range(1, 46)},
+    **{f'LINE_ICD9_DGNS_CD_{i}': 'string' for i in range(1, 14)},
     **{f'LINE_NCH_PMT_AMT_{i}': 'float64' for i in range(1, 14)}
 }
 
@@ -63,6 +63,9 @@ def load_beneficiary(file_path: str) -> dd.DataFrame:
     """
     logger.info(f"Loading beneficiary data from {file_path}")
     df = dd.read_csv(file_path, usecols=BENEFICIARY_COLUMNS, dtype=BENEFICIARY_DTYPES, blocksize=10e6, engine='pyarrow')
+    
+    # Explicitly cast DESYNPUF_ID to string
+    df['DESYNPUF_ID'] = df['DESYNPUF_ID'].astype('string')
     
     # Filter for beneficiaries with coverage in 2009
     df = df[df['BENE_HI_CVRAGE_TOT_MONS'] >= 1]
@@ -120,6 +123,9 @@ def load_claims(file_path: str, file_type: str) -> dd.DataFrame:
     # Load with Dask and PyArrow
     df = dd.read_csv(file_path, usecols=cols, dtype=CLAIMS_DTYPES, blocksize=10e6, engine='pyarrow')
     
+    # Explicitly cast DESYNPUF_ID to string
+    df['DESYNPUF_ID'] = df['DESYNPUF_ID'].astype('string')
+    
     # For carrier claims, sum LINE_NCH_PMT_AMT_1 to LINE_NCH_PMT_AMT_13 into CLM_PMT_AMT
     if file_type == 'carrier':
         line_pmt_cols = [f'LINE_NCH_PMT_AMT_{i}' for i in range(1, 14)]
@@ -130,7 +136,7 @@ def load_claims(file_path: str, file_type: str) -> dd.DataFrame:
     # Clean CLM_FROM_DT
     df['CLM_FROM_DT'] = df['CLM_FROM_DT'].str.replace(r'\.0$', '', regex=True).str.strip()
     df['CLM_FROM_DT'] = dd.to_datetime(df['CLM_FROM_DT'], format='%Y%m%d', errors='coerce')
-    df = df[~df['CLM_FROM_DT'].isna()].persist()  # Persist after filtering null dates
+    df = df[~df['CLM_FROM_DT'].isna()].persist()
     
     # Clean ICD-9 and HCPCS codes
     icd9_cols = [col for col in df.columns if 'ICD9_DGNS_CD' in col or 'LINE_ICD9_DGNS_CD' in col]
@@ -160,6 +166,9 @@ def identify_septicemia_cases(inpatient_df: dd.DataFrame) -> dd.DataFrame:
     """
     logger.info("Identifying septicemia cases in 2009")
     
+    # Ensure DESYNPUF_ID is string
+    inpatient_df['DESYNPUF_ID'] = inpatient_df['DESYNPUF_ID'].astype('string')
+    
     # Filter for 2009 claims
     df = inpatient_df[inpatient_df['CLM_FROM_DT'].dt.year == 2009]
     
@@ -180,6 +189,9 @@ def identify_septicemia_cases(inpatient_df: dd.DataFrame) -> dd.DataFrame:
     # Get latest septicemia date per beneficiary
     septicemia_cases = septicemia_df.groupby('DESYNPUF_ID')['CLM_FROM_DT'].max().reset_index()
     septicemia_cases = septicemia_cases.rename(columns={'CLM_FROM_DT': 'latest_septicemia_date'})
+    
+    # Ensure DESYNPUF_ID is string
+    septicemia_cases['DESYNPUF_ID'] = septicemia_cases['DESYNPUF_ID'].astype('string')
     
     # Save intermediate result
     output_path = os.path.join(project_root, 'data/processed/septicemia_risk/septicemia_cases.csv')
@@ -202,9 +214,14 @@ def assign_index_dates(septicemia_cases: dd.DataFrame, claims_df: dd.DataFrame,
         end_date (str): End date for random index (default: 2009-12-25).
     
     Returns:
-        dd.DataFrame: DESYNPUF_ID and index_date.
+        dd.DataFrame: DESYNPUF_ID, septicemia_case_ind, index_date.
     """
     logger.info("Assigning index dates")
+    
+    # Ensure DESYNPUF_ID is string
+    claims_df['DESYNPUF_ID'] = claims_df['DESYNPUF_ID'].astype('string')
+    beneficiary_df['DESYNPUF_ID'] = beneficiary_df['DESYNPUF_ID'].astype('string')
+    septicemia_cases['DESYNPUF_ID'] = septicemia_cases['DESYNPUF_ID'].astype('string')
     
     # Filter 2009 claims
     claims_2009 = claims_df[claims_df['CLM_FROM_DT'].dt.year == 2009][['DESYNPUF_ID', 'CLM_FROM_DT']]
@@ -216,6 +233,7 @@ def assign_index_dates(septicemia_cases: dd.DataFrame, claims_df: dd.DataFrame,
     
     # Assign latest septicemia date for septicemia cases
     septicemia_index = septicemia_cases.rename(columns={'latest_septicemia_date': 'index_date'})
+    septicemia_index['septicemia_case_ind'] = 1
     
     # For non-septicemia beneficiaries, sample random 2009 claim date
     non_septicemia = valid_beneficiaries[~valid_beneficiaries['DESYNPUF_ID'].isin(septicemia_cases['DESYNPUF_ID'])]
@@ -229,11 +247,14 @@ def assign_index_dates(septicemia_cases: dd.DataFrame, claims_df: dd.DataFrame,
     non_septicemia_index = non_septicemia.groupby('DESYNPUF_ID').apply(
         lambda x: x.sample(n=1, random_state=42)[['CLM_FROM_DT']],
         meta={'CLM_FROM_DT': 'datetime64[ns]'},
-        include_groups=False
-    ).reset_index(drop=False).rename(columns={'CLM_FROM_DT': 'index_date'})
+        include_groups=True
+    ).reset_index().rename(columns={'index':'DESYNPUF_ID','CLM_FROM_DT': 'index_date'})[['DESYNPUF_ID', 'index_date']]
+    non_septicemia_index['DESYNPUF_ID'] = non_septicemia_index['DESYNPUF_ID'].astype('string')
+    non_septicemia_index['septicemia_case_ind'] = 0
     
     # Combine septicemia and non-septicemia index dates
-    index_dates = dd.concat([septicemia_index, non_septicemia_index], axis=0)[['DESYNPUF_ID', 'index_date']]
+    index_dates = dd.concat([septicemia_index, non_septicemia_index], axis=0)[['DESYNPUF_ID', 'septicemia_case_ind', 'index_date']]
+    index_dates['DESYNPUF_ID'] = index_dates['DESYNPUF_ID'].astype('string')
     
     # Save intermediate result
     output_path = os.path.join(project_root, 'data/processed/septicemia_risk/index_dates.csv')
@@ -241,59 +262,6 @@ def assign_index_dates(septicemia_cases: dd.DataFrame, claims_df: dd.DataFrame,
     logger.info(f"Assigned index dates for {len(index_dates)} beneficiaries, saved to {output_path}")
     
     return index_dates
-
-def derive_outcome(inpatient_df: dd.DataFrame, index_dates: dd.DataFrame, window: int = 7) -> dd.DataFrame:
-    """
-    Derive binary outcome: septicemia within 7 days post-index.
-    
-    Args:
-        inpatient_df (dd.DataFrame): Inpatient claims data.
-        index_dates (dd.DataFrame): DESYNPUF_ID and index_date.
-        window (int): Look-forward window in days (default: 7).
-    
-    Returns:
-        dd.DataFrame: DESYNPUF_ID, index_date, septicemia_outcome.
-    """
-    logger.info("Deriving septicemia outcome")
-    
-    # Define outcome window
-    index_dates = index_dates[['DESYNPUF_ID', 'index_date']].persist()
-    index_dates['window_end'] = index_dates['index_date'] + timedelta(days=window)
-    
-    # Filter inpatient claims for outcome window
-    outcome_df = index_dates.merge(
-        inpatient_df[['DESYNPUF_ID', 'CLM_FROM_DT'] + [f'ICD9_DGNS_CD_{i}' for i in range(1, 11)] + ['ADMTNG_ICD9_DGNS_CD']],
-        on='DESYNPUF_ID', how='left'
-    )
-    outcome_df = outcome_df[
-        (outcome_df['CLM_FROM_DT'] >= outcome_df['index_date']) &
-        (outcome_df['CLM_FROM_DT'] <= outcome_df['window_end'])
-    ]
-    
-    # Check for septicemia
-    icd9_cols = [f'ICD9_DGNS_CD_{i}' for i in range(1, 11)] + ['ADMTNG_ICD9_DGNS_CD']
-    for i, col in enumerate(icd9_cols):
-        outcome_df[f'is_septicemia_{i}'] = (outcome_df[col] == '0389').astype('int8')
-    
-    # Sum indicators to check for any septicemia
-    septicemia_cols = [f'is_septicemia_{i}' for i in range(len(icd9_cols))]
-    outcome_df['septicemia_outcome'] = outcome_df[septicemia_cols].sum(axis=1).fillna(0).astype('int8')
-    
-    # Aggregate to binary outcome
-    outcome_df = outcome_df.groupby(['DESYNPUF_ID', 'index_date'])['septicemia_outcome'].max().reset_index()
-    outcome_df = outcome_df.persist()
-    logger.info(f"outcome_df null counts after groupby: {outcome_df.isna().sum().compute()}")
-    
-    # Ensure all index dates are included
-    outcome_df = index_dates[['DESYNPUF_ID', 'index_date']].merge(
-        outcome_df, on=['DESYNPUF_ID', 'index_date'], how='left'
-    )
-    outcome_df['septicemia_outcome'] = outcome_df['septicemia_outcome'].fillna(0).astype('int8')
-    outcome_df = outcome_df.persist()
-    logger.info(f"outcome_df null counts after merge: {outcome_df.isna().sum().compute()}")
-    
-    logger.info(f"Positive outcomes: {outcome_df['septicemia_outcome'].sum().compute()}/{len(outcome_df)}")
-    return outcome_df
 
 def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
                      index_dates: dd.DataFrame, lookback_days: int = 30,
@@ -304,7 +272,7 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
     Args:
         beneficiary_df (dd.DataFrame): Beneficiary data.
         claims_df (dd.DataFrame): Combined claims data.
-        index_dates (dd.DataFrame): DESYNPUF_ID and index_date.
+        index_dates (dd.DataFrame): DESYNPUF_ID, septicemia_case_ind, index_date.
         lookback_days (int): Lookback period in days (default: 30).
         top_icd9_codes (list): Top ICD-9 codes from EDA.
         top_hcpcs_codes (list): Top HCPCS codes from EDA.
@@ -315,12 +283,17 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
     logger = setup_logger(log_dir=os.path.join(project_root, "outputs/logs"), log_file="engineer_features.log")
     logger.info("Engineering features")
     
+    # Ensure DESYNPUF_ID is string
+    beneficiary_df['DESYNPUF_ID'] = beneficiary_df['DESYNPUF_ID'].astype('string')
+    claims_df['DESYNPUF_ID'] = claims_df['DESYNPUF_ID'].astype('string')
+    index_dates['DESYNPUF_ID'] = index_dates['DESYNPUF_ID'].astype('string')
+    
     # Log columns of input DataFrames
     logger.info(f"index_dates columns: {index_dates.columns.tolist()}")
     logger.info(f"beneficiary_df columns: {beneficiary_df.columns.tolist()}")
     logger.info(f"claims_df columns: {claims_df.columns.tolist()}")
     
-    # Select only necessary columns from claims_df to reduce memory usage
+    # Select only necessary columns from claims_df
     icd9_cols = [col for col in claims_df.columns if 'ICD9_DGNS_CD' in col or 'LINE_ICD9_DGNS_CD' in col]
     hcpcs_cols = [col for col in claims_df.columns if 'HCPCS_CD' in col]
     claims_cols = ['DESYNPUF_ID', 'CLM_ID', 'CLM_FROM_DT', 'CLM_PMT_AMT', 'file_type'] + icd9_cols + hcpcs_cols
@@ -329,7 +302,7 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
     
     # Merge demographic and chronic condition features
     start_time = time.time()
-    features_df = index_dates[['DESYNPUF_ID', 'index_date']].merge(beneficiary_df, on='DESYNPUF_ID', how='left')
+    features_df = index_dates.merge(beneficiary_df, on='DESYNPUF_ID', how='left')
     for col in ['age', 'chronic_condition_count', 'SP_ALZHDMTA', 'SP_CHF', 'SP_CHRNKIDN', 
                 'SP_CNCR', 'SP_COPD', 'SP_DEPRESSN', 'SP_DIABETES', 'SP_ISCHMCHT', 
                 'SP_OSTEOPRS', 'SP_RA_OA', 'SP_STRKETIA']:
@@ -341,7 +314,7 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
     
     # Filter claims within 30-day lookback
     start_time = time.time()
-    claims_window = index_dates[['DESYNPUF_ID', 'index_date']].merge(
+    claims_window = index_dates.merge(
         claims_df, on='DESYNPUF_ID', how='left'
     )
     claims_window = claims_window[
@@ -355,18 +328,20 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
     for file_type in ['inpatient', 'outpatient', 'carrier']:
         start_time = time.time()
         file_df = claims_window[claims_window['file_type'] == file_type]
-        counts = file_df.groupby(['DESYNPUF_ID', 'index_date'])['CLM_ID'].count().reset_index()
+        counts = file_df.groupby(['DESYNPUF_ID', 'septicemia_case_ind', 'index_date'])['CLM_ID'].count().reset_index()
         counts = counts.rename(columns={'CLM_ID': f'{file_type}_count_{lookback_days}d'})
         counts[f'{file_type}_count_{lookback_days}d'] = counts[f'{file_type}_count_{lookback_days}d'].fillna(0).astype('int32')
+        counts['DESYNPUF_ID'] = counts['DESYNPUF_ID'].astype('string')
         counts = counts.persist()
         logger.info(f"{file_type}_count_{lookback_days}d null count: {counts[f'{file_type}_count_{lookback_days}d'].isna().sum().compute()}")
-        amounts = file_df.groupby(['DESYNPUF_ID', 'index_date'])['CLM_PMT_AMT'].sum().reset_index()
+        amounts = file_df.groupby(['DESYNPUF_ID', 'septicemia_case_ind', 'index_date'])['CLM_PMT_AMT'].sum().reset_index()
         amounts = amounts.rename(columns={'CLM_PMT_AMT': f'{file_type}_amt_{lookback_days}d'})
         amounts[f'{file_type}_amt_{lookback_days}d'] = amounts[f'{file_type}_amt_{lookback_days}d'].fillna(0).astype('float64')
+        amounts['DESYNPUF_ID'] = amounts['DESYNPUF_ID'].astype('string')
         amounts = amounts.persist()
         logger.info(f"{file_type}_amt_{lookback_days}d null count: {amounts[f'{file_type}_amt_{lookback_days}d'].isna().sum().compute()}")
-        features_df = features_df.merge(counts, on=['DESYNPUF_ID', 'index_date'], how='left')
-        features_df = features_df.merge(amounts, on=['DESYNPUF_ID', 'index_date'], how='left')
+        features_df = features_df.merge(counts, on=['DESYNPUF_ID', 'septicemia_case_ind', 'index_date'], how='left')
+        features_df = features_df.merge(amounts, on=['DESYNPUF_ID', 'septicemia_case_ind', 'index_date'], how='left')
         features_df = features_df.persist()
         logger.info(f"{file_type} aggregation completed in {time.time() - start_time:.2f} seconds")
     
@@ -383,13 +358,14 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
         claims_window[f'icd9_{code_clean}_sum'] = claims_window[icd9_indicators].sum(axis=1).fillna(0).astype('int32')
         claims_window = claims_window.persist()
         logger.info(f"icd9_{code_clean}_sum null count: {claims_window[f'icd9_{code_clean}_sum'].isna().sum().compute()}")
-        icd9_flag = claims_window[claims_window[f'icd9_{code_clean}_sum'] > 0][['DESYNPUF_ID', 'index_date']].groupby(['DESYNPUF_ID', 'index_date']).size().reset_index().rename(columns={0: 'count'})
+        icd9_flag = claims_window[claims_window[f'icd9_{code_clean}_sum'] > 0][['DESYNPUF_ID', 'septicemia_case_ind', 'index_date']].groupby(['DESYNPUF_ID', 'septicemia_case_ind', 'index_date']).size().reset_index().rename(columns={0: 'count'})
+        icd9_flag['DESYNPUF_ID'] = icd9_flag['DESYNPUF_ID'].astype('string')
         icd9_flag[f'icd9_{code_clean}_{lookback_days}d'] = (icd9_flag['count'] > 0).astype('int8')
         icd9_flag = icd9_flag.persist()
         logger.info(f"icd9_{code_clean}_{lookback_days}d null count: {icd9_flag[f'icd9_{code_clean}_{lookback_days}d'].isna().sum().compute()}")
         features_df = features_df.merge(
-            icd9_flag[['DESYNPUF_ID', 'index_date', f'icd9_{code_clean}_{lookback_days}d']],
-            on=['DESYNPUF_ID', 'index_date'], how='left'
+            icd9_flag[['DESYNPUF_ID', 'septicemia_case_ind', 'index_date', f'icd9_{code_clean}_{lookback_days}d']],
+            on=['DESYNPUF_ID', 'septicemia_case_ind', 'index_date'], how='left'
         )
         features_df[f'icd9_{code_clean}_{lookback_days}d'] = features_df[f'icd9_{code_clean}_{lookback_days}d'].fillna(0).astype('int8')
         features_df = features_df.persist()
@@ -408,13 +384,14 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
         claims_window[f'hcpcs_{code}_sum'] = claims_window[hcpcs_indicators].sum(axis=1).fillna(0).astype('int32')
         claims_window = claims_window.persist()
         logger.info(f"hcpcs_{code}_sum null count: {claims_window[f'hcpcs_{code}_sum'].isna().sum().compute()}")
-        hcpcs_flag = claims_window[claims_window[f'hcpcs_{code}_sum'] > 0][['DESYNPUF_ID', 'index_date']].groupby(['DESYNPUF_ID', 'index_date']).size().reset_index().rename(columns={0: 'count'})
+        hcpcs_flag = claims_window[claims_window[f'hcpcs_{code}_sum'] > 0][['DESYNPUF_ID', 'septicemia_case_ind', 'index_date']].groupby(['DESYNPUF_ID', 'septicemia_case_ind', 'index_date']).size().reset_index().rename(columns={0: 'count'})
+        hcpcs_flag['DESYNPUF_ID'] = hcpcs_flag['DESYNPUF_ID'].astype('string')
         hcpcs_flag[f'hcpcs_{code}_{lookback_days}d'] = (hcpcs_flag['count'] > 0).astype('int8')
         hcpcs_flag = hcpcs_flag.persist()
         logger.info(f"hcpcs_{code}_{lookback_days}d null count: {hcpcs_flag[f'hcpcs_{code}_{lookback_days}d'].isna().sum().compute()}")
         features_df = features_df.merge(
-            hcpcs_flag[['DESYNPUF_ID', 'index_date', f'hcpcs_{code}_{lookback_days}d']],
-            on=['DESYNPUF_ID', 'index_date'], how='left'
+            hcpcs_flag[['DESYNPUF_ID', 'septicemia_case_ind', 'index_date', f'hcpcs_{code}_{lookback_days}d']],
+            on=['DESYNPUF_ID', 'septicemia_case_ind', 'index_date'], how='left'
         )
         features_df[f'hcpcs_{code}_{lookback_days}d'] = features_df[f'hcpcs_{code}_{lookback_days}d'].fillna(0).astype('int8')
         features_df = features_df.persist()
@@ -435,7 +412,7 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
         ]:
             features_df[col] = features_df[col].fillna(0).astype('int32')
     
-    # Persist features_df to materialize fills
+    # Persist features_df
     features_df = features_df.persist()
     logger.info(f"Final fill and persist completed in {time.time() - start_time:.2f} seconds")
     
@@ -451,26 +428,25 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
     logger.info(f"Generated features for {len(features_df)} beneficiaries")
     return features_df
 
-def save_dataset(outcome_df: dd.DataFrame, features_df: dd.DataFrame, output_path: str) -> None:
+def save_dataset(features_df: dd.DataFrame, output_path: str) -> None:
     """
-    Combine outcomes and features, save to CSV.
+    Save features dataset with septicemia_case_ind as outcome.
     
     Args:
-        outcome_df (dd.DataFrame): DESYNPUF_ID, index_date, septicemia_outcome.
-        features_df (dd.DataFrame): Feature set.
+        features_df (dd.DataFrame): Feature set with DESYNPUF_ID, septicemia_case_ind, index_date, and features.
         output_path (str): Path to save dataset CSV.
     """
     logger.info(f"Saving dataset to {output_path}")
     
-    # Merge outcomes and features
-    dataset = outcome_df.merge(features_df, on=['DESYNPUF_ID', 'index_date'], how='inner')
+    # Ensure septicemia_case_ind is included and cast to int8
+    features_df['septicemia_case_ind'] = features_df['septicemia_case_ind'].astype('int8')
     
     # Save to CSV
-    dataset.to_csv(output_path, single_file=True, index=False)
+    features_df.to_csv(output_path, single_file=True, index=False)
     
     # Log statistics
-    positive_count = dataset['septicemia_outcome'].sum().compute()
-    logger.info(f"Saved dataset with {len(dataset)} rows, {positive_count} positive outcomes")
+    positive_count = features_df['septicemia_case_ind'].sum().compute()
+    logger.info(f"Saved dataset with {len(features_df)} rows, {positive_count} positive outcomes")
 
 def preprocess_pipeline(beneficiary_file: str, inpatient_file: str, outpatient_file: str,
                       carrier_file: str, top_icd9_codes: list = [], top_hcpcs_codes: list = [],
@@ -509,14 +485,11 @@ def preprocess_pipeline(beneficiary_file: str, inpatient_file: str, outpatient_f
     # Assign index dates
     index_dates = assign_index_dates(septicemia_cases, claims_df, beneficiary_df)
     
-    # Derive outcome
-    outcome_df = derive_outcome(inpatient_df, index_dates)
-    
     # Engineer features
     features_df = engineer_features(beneficiary_df, claims_df, index_dates, lookback_days, top_icd9_codes, top_hcpcs_codes)
     
     # Save dataset
-    save_dataset(outcome_df, features_df, output_path)
+    save_dataset(features_df, output_path)
     
     logger.info("Preprocessing pipeline completed")
 
@@ -527,7 +500,15 @@ if __name__ == "__main__":
         inpatient_file=os.path.join(project_root, 'data/raw/DE1_0_2008_to_2010_Inpatient_Claims_Sample_1.csv'),
         outpatient_file=os.path.join(project_root, 'data/raw/DE1_0_2008_to_2010_Outpatient_Claims_Sample_1.csv'),
         carrier_file=os.path.join(project_root, 'data/raw/DE1_0_2008_to_2010_Carrier_Claims_Sample_1A.csv'),
-        top_icd9_codes=['599.0', '486'],
-        top_hcpcs_codes=['99231', '36415'],
+        top_icd9_codes=['40390', '585', '7993', '78603', '9583', 'V5881', '56211', '40391', '27651', '135',
+                        '51881', '5070', 'V420', '72703', '5849', '3051', '79430', 'V561', '2851', '79902',
+                        'V5789', 'V053', '42823', '6826', 'V560', '2662', '2639', '481', '99673', '41519',
+                        '2762', '486', '1890', '2819', '78791', '2761', '4139', '4281', 'V726', '5854',
+                        '70703', '78701', '29653', '44021', '5856', '78009', '58881', '43491', '72981',
+                        '72402', '0389', '2948', '7837', '4275', '2809', '78097', '8208', '2767', '28521',
+                        '72885', '25040', '49121'],
+        top_hcpcs_codes=['90945', '93307', 'Q4081', '90999', 'J0882', 'A0425', '99291', 'J2916', 'A4913',
+                        'J2501', 'P9603', '87340', '82310', '99239', 'A4657', '83970', 'J1270', 'J1756',
+                        '82435', 'J2405', '90960', '80162', '82728'],
         output_path=os.path.join(project_root, 'data/processed/septicemia_risk/dataset.csv')
     )
