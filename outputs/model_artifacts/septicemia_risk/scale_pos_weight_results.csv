@@ -1,0 +1,4 @@
+scale_pos_weight,optimal_threshold,recall,precision,f1_score,roc_auc,best_params
+1,0.04,0.19534883720930232,0.037102473498233215,0.062360801781737196,0.7073771242466043,"{'subsample': 0.9, 'n_estimators': 300, 'min_child_weight': 5, 'max_depth': 10, 'learning_rate': 0.2, 'gamma': 0.1, 'colsample_bytree': 0.8}"
+3,0.16,0.09302325581395349,0.06116207951070336,0.07380073800738007,0.6862001957540825,"{'subsample': 0.9, 'n_estimators': 300, 'min_child_weight': 5, 'max_depth': 10, 'learning_rate': 0.2, 'gamma': 0.1, 'colsample_bytree': 0.8}"
+5,0.05,0.22790697674418606,0.03783783783783784,0.06490066225165562,0.7027364073974438,"{'subsample': 0.9, 'n_estimators': 300, 'min_child_weight': 5, 'max_depth': 10, 'learning_rate': 0.2, 'gamma': 0.1, 'colsample_bytree': 0.8}"

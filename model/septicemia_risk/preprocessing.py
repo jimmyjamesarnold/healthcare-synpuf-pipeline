@@ -35,7 +35,8 @@ BENEFICIARY_DTYPES = {
     'SP_ISCHMCHT': 'int8',
     'SP_OSTEOPRS': 'int8',
     'SP_RA_OA': 'int8',
-    'SP_STRKETIA': 'int8'
+    'SP_STRKETIA': 'int8',
+    'BENE_ESRD_IND': 'string'
 }
 BENEFICIARY_COLUMNS = list(BENEFICIARY_DTYPES.keys())
 
@@ -74,6 +75,9 @@ def load_beneficiary(file_path: str) -> dd.DataFrame:
     df['age'] = 2009 - dd.to_datetime(df['BENE_BIRTH_DT'], format='%Y%m%d').dt.year
     df['age'] = df['age'].fillna(0).astype('int32')
     
+    # Recode BENE_ESRD_IND
+    df['BENE_ESRD_IND'] = (df['BENE_ESRD_IND'] == 'Y').astype('int8')
+
     # Recode chronic conditions (1=yes, 2=no) to binary (1/0)
     chronic_cols = [
         'SP_ALZHDMTA', 'SP_CHF', 'SP_CHRNKIDN', 'SP_CNCR', 'SP_COPD',
@@ -87,7 +91,7 @@ def load_beneficiary(file_path: str) -> dd.DataFrame:
     df['chronic_condition_count'] = df[chronic_cols].sum(axis=1).fillna(0).astype('int32')
     
     # Select relevant columns
-    cols = ['DESYNPUF_ID', 'age', 'BENE_SEX_IDENT_CD', 'SP_STATE_CODE'] + chronic_cols + ['chronic_condition_count']
+    cols = ['DESYNPUF_ID', 'age', 'BENE_SEX_IDENT_CD', 'SP_STATE_CODE', 'BENE_ESRD_IND'] + chronic_cols + ['chronic_condition_count']
     df = df[cols]
     
     # Debug: Check for nulls
@@ -265,7 +269,8 @@ def assign_index_dates(septicemia_cases: dd.DataFrame, claims_df: dd.DataFrame,
 
 def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
                      index_dates: dd.DataFrame, lookback_days: int = 30,
-                     top_icd9_codes: list = [], top_hcpcs_codes: list = []) -> dd.DataFrame:
+                     top_icd9_codes: list = [], top_hcpcs_codes: list = [],
+                     interaction_pairs: list = []) -> dd.DataFrame:
     """
     Generate demographic, chronic condition, and claims-based features.
     
@@ -276,6 +281,7 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
         lookback_days (int): Lookback period in days (default: 30).
         top_icd9_codes (list): Top ICD-9 codes from EDA.
         top_hcpcs_codes (list): Top HCPCS codes from EDA.
+        interaction_pairs (list): Top ICD-9 code pairs from EDA.
     
     Returns:
         dd.DataFrame: Feature set with demographic, chronic, and claims-based features.
@@ -372,6 +378,47 @@ def engineer_features(beneficiary_df: dd.DataFrame, claims_df: dd.DataFrame,
         claims_window = claims_window.drop(columns=icd9_indicators + [f'icd9_{code_clean}_sum'])
         logger.info(f"ICD-9 {code_clean} processing completed in {time.time() - start_time:.2f} seconds")
     
+    # Add interaction features for ICD-9 pairs
+    for code1, code2 in interaction_pairs:
+        start_time = time.time()
+        code1_clean = code1.replace('icd9_', '').replace('_30d', '') if code1.startswith('icd9_') else code1
+        code2_clean = code2.replace('icd9_', '').replace('_30d', '') if code2.startswith('icd9_') else code2
+        feature_name = f'icd9_{code1_clean}_and_{code2_clean}_{lookback_days}d'
+        
+        # Use _sum columns from ICD-9 flags loop
+        sum_col1 = f'icd9_{code1_clean}_sum'
+        sum_col2 = f'icd9_{code2_clean}_sum'
+        
+        # Ensure sum columns exist
+        if sum_col1 not in claims_window.columns or sum_col2 not in claims_window.columns:
+            logger.warning(f"One or both of {sum_col1}, {sum_col2} not found in claims_window. Skipping {feature_name}")
+            continue
+        
+        # Compute interaction: 1 if both codes are present, 0 otherwise
+        claims_window[feature_name] = ((claims_window[sum_col1] > 0) & 
+                                    (claims_window[sum_col2] > 0)).astype('int8')
+        claims_window = claims_window.persist()
+        
+        # Aggregate to patient level
+        interaction_flag = claims_window[claims_window[feature_name] > 0][
+            ['DESYNPUF_ID', 'septicemia_case_ind', 'index_date']
+        ].groupby(['DESYNPUF_ID', 'septicemia_case_ind', 'index_date']).size().reset_index().rename(columns={0: 'count'})
+        interaction_flag['DESYNPUF_ID'] = interaction_flag['DESYNPUF_ID'].astype('string')
+        interaction_flag[feature_name] = (interaction_flag['count'] > 0).astype('int8')
+        interaction_flag = interaction_flag.persist()
+        
+        logger.info(f"{feature_name} null count: {interaction_flag[feature_name].isna().sum().compute()}")
+        
+        # Merge with features_df
+        features_df = features_df.merge(
+            interaction_flag[['DESYNPUF_ID', 'septicemia_case_ind', 'index_date', feature_name]],
+            on=['DESYNPUF_ID', 'septicemia_case_ind', 'index_date'], how='left'
+        )
+        features_df[feature_name] = features_df[feature_name].fillna(0).astype('int8')
+        features_df = features_df.persist()
+        
+        logger.info(f"Interaction {feature_name} processing completed in {time.time() - start_time:.2f} seconds")
+
     # Add binary flags for top HCPCS codes
     hcpcs_cols = [col for col in claims_window.columns if 'HCPCS_CD' in col]
     for code in top_hcpcs_codes:
@@ -450,6 +497,7 @@ def save_dataset(features_df: dd.DataFrame, output_path: str) -> None:
 
 def preprocess_pipeline(beneficiary_file: str, inpatient_file: str, outpatient_file: str,
                       carrier_file: str, top_icd9_codes: list = [], top_hcpcs_codes: list = [],
+                      interaction_pairs: list = [],
                       lookback_days: int = 30, output_path: str = 'data/processed/septicemia_risk/dataset.csv') -> None:
     """
     Orchestrate preprocessing pipeline for septicemia risk prediction.
@@ -461,6 +509,7 @@ def preprocess_pipeline(beneficiary_file: str, inpatient_file: str, outpatient_f
         carrier_file (str): Path to carrier claims CSV.
         top_icd9_codes (list): Top ICD-9 codes from EDA.
         top_hcpcs_codes (list): Top HCPCS codes from EDA.
+        interaction_pairs (list): Top ICD-9 code pairs from EDA.
         lookback_days (int): Lookback period in days (default: 30).
         output_path (str): Path to save dataset CSV.
     """
@@ -500,15 +549,93 @@ if __name__ == "__main__":
         inpatient_file=os.path.join(project_root, 'data/raw/DE1_0_2008_to_2010_Inpatient_Claims_Sample_1.csv'),
         outpatient_file=os.path.join(project_root, 'data/raw/DE1_0_2008_to_2010_Outpatient_Claims_Sample_1.csv'),
         carrier_file=os.path.join(project_root, 'data/raw/DE1_0_2008_to_2010_Carrier_Claims_Sample_1A.csv'),
-        top_icd9_codes=['40390', '585', '7993', '78603', '9583', 'V5881', '56211', '40391', '27651', '135',
-                        '51881', '5070', 'V420', '72703', '5849', '3051', '79430', 'V561', '2851', '79902',
-                        'V5789', 'V053', '42823', '6826', 'V560', '2662', '2639', '481', '99673', '41519',
-                        '2762', '486', '1890', '2819', '78791', '2761', '4139', '4281', 'V726', '5854',
-                        '70703', '78701', '29653', '44021', '5856', '78009', '58881', '43491', '72981',
-                        '72402', '0389', '2948', '7837', '4275', '2809', '78097', '8208', '2767', '28521',
-                        '72885', '25040', '49121'],
-        top_hcpcs_codes=['90945', '93307', 'Q4081', '90999', 'J0882', 'A0425', '99291', 'J2916', 'A4913',
-                        'J2501', 'P9603', '87340', '82310', '99239', 'A4657', '83970', 'J1270', 'J1756',
-                        '82435', 'J2405', '90960', '80162', '82728'],
+        top_icd9_codes=['99673',
+ 'V053',
+ '585',
+ '5070',
+ 'V560',
+ 'V561',
+ '2762',
+ '58881',
+ '40391',
+ '2639',
+ '0389',
+ '28521',
+ '2851',
+ '51881',
+ '79902',
+ '5849',
+ '78009',
+ '78097',
+ '40390',
+ '25040',
+ 'V420',
+ '5856',
+ '72981',
+ '2809',
+ '43491',
+ '49121',
+ '2948',
+ '5854',
+ '3051',
+ '78791',
+ '78701',
+ '486',
+ '27651',
+ '2761',
+ '5119'],
+        top_hcpcs_codes=['90945',
+ 'J2916',
+ 'J0882',
+ 'A4913',
+ 'A4657',
+ 'Q4081',
+ 'J1270',
+ 'J2501',
+ '90999',
+ 'J1756',
+ '80162',
+ '93307',
+ '82310',
+ '99291',
+ 'J2405',
+ 'A0425',
+ '83970',
+ '98941',
+ '92135'],
+        interaction_pairs=[('99673', '78009'),
+ ('99673', '43491'),
+ ('99673', '2948'),
+ ('V053', '40390'),
+ ('V053', '486'),
+ ('585', '2762'),
+ ('V560', '2762'),
+ ('V560', '3051'),
+ ('2762', '40390'),
+ ('2762', '43491'),
+ ('40391', '78009'),
+ ('2639', '3051'),
+ ('78009', '72981'),
+ ('25040', '72981'),
+ ('58881', '2809'),
+ ('58881', '28521'),
+ ('58881', '5856'),
+ ('5856', '2809'),
+ ('V560', '2809'),
+ ('28521', '2809'),
+ ('585', '28521'),
+ ('58881', '5849'),
+ ('99673', '58881'),
+ ('585', '2809'),
+ ('2762', '5849'),
+ ('99673', '2809'),
+ ('585', '58881'),
+ ('99673', '5856'),
+ ('V560', '58881'),
+ ('51881', '5119'),
+ ('585', '5856'),
+ ('28521', '51881'),
+ ('28521', '5856'),
+ ('40391', '5856')],
         output_path=os.path.join(project_root, 'data/processed/septicemia_risk/dataset.csv')
     )
